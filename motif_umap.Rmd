@@ -1,0 +1,172 @@
+---
+title: "Motif Content Analysis"
+output: html_notebook
+---
+
+
+# Load packages
+
+```{r}
+
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(tidyverse)
+  library(gridExtra)
+  library(viridis)
+  library(reshape2)
+  library(devtools)
+  library(monocle3)
+  library(data.table)
+  library(gridExtra)
+})
+
+```
+
+
+Read in motif matrix file
+
+```{r}
+
+# motif matrix files (individual motifs or family, in trajectory THS or all THS)
+traj.mat.fam = read.csv('motif_by_trajTHS_family.csv')
+traj.mat.all = read.csv('motif_by_trajTHS_all.csv')
+ths.mat.fam = read.csv('motif_by_allTHS_family.csv')
+ths.mat.all = read.csv('motif_by_allTHS_all.csv')
+
+# data frame with information on trajectory THS patterns
+traj.df = fread('trajectoryTHS_type.csv')
+
+```
+
+# All THS UMAP
+
+```{r}
+
+
+# generate dummy metadata to comply with Monocle formatting requirements
+cell_metadata = as.data.frame(cbind(colnames(ths.mat.all), colnames(ths.mat.all)))
+rownames(cell_metadata) = cell_metadata[,1]
+gene_annotation =  as.data.frame(cbind(rownames(ths.mat.all), rownames(ths.mat.all)))
+colnames(gene_annotation) = c('id', 'gene_short_name')
+rownames(gene_annotation) = gene_annotation$id
+
+# build cds
+cds <- new_cell_data_set(ths.mat.all %>% as.matrix,
+                         cell_metadata = cell_metadata,
+                         gene_metadata = gene_annotation)
+
+# parse THS names to get metadata on genomic location/size
+colData(cds)$chr = unlist(strsplit(colData(cds)[,1], split='\\.'))[seq(1,length(unlist(strsplit(colData(cds)[,1], split='\\.'))), 3)]
+colData(cds)$start = as.numeric(unlist(strsplit(colData(cds)[,1], split='\\.'))[seq(2,length(unlist(strsplit(colData(cds)[,1], split='\\.'))), 3)])
+colData(cds)$stop = as.numeric(unlist(strsplit(colData(cds)[,1], split='\\.'))[seq(3,length(unlist(strsplit(colData(cds)[,1], split='\\.'))), 3)])
+colData(cds)$len = colData(cds)$stop - colData(cds)$start
+colData(cds)$ths = paste(colData(cds)$chr, ':',colData(cds)$start,'-', colData(cds)$stop, sep = '')
+
+# add metadata on dynamic THS along stomatal developmental trajectory 
+colData(cds)$traj_type = rep(NA, length(colData(cds)$ths))
+colData(cds)$traj_type = hit.df$traj_type[match(colData(cds)$ths, traj.df$ths)]
+
+# size factors are computed based on median-normalized length of THS
+colData(cds)$Size_Factor = colData(cds)$len / median(colData(cds)$len)
+
+# pre-process with PCA and use UMAP dimensionality reduction
+cds <- preprocess_cds(cds, num_dim = 50)
+cds <- reduce_dimension(cds,
+                        preprocess_method = 'PCA',
+                        reduction_method = 'UMAP',
+                        umap.min_dist = 0.2,
+                        umap.n_neighbors = 25L)
+cds <- cluster_cells(cds, resolution = 1e-5,
+                     reduction_method = 'UMAP')
+
+
+```
+
+
+Plot UMAP of all THS
+
+```{r}
+
+# colored by cluster
+plot_cells(cds, color_cells_by='cluster', label_cell_groups = FALSE, alpha=1, cell_size = 0.5) + theme(legend.position = "none")
+
+# color THS if motif is present (binary), examples below
+plot_cells(cds, genes='BBRBPC_tnt.BPC1_col_a_m1', label_cell_groups = FALSE, alpha=1, cell_size = 0.5) +
+  scale_color_gradient(low = '#eb6565', high = '#eb6565') + theme(legend.position = 'none')
+
+plot_cells(cds, genes='bHLH_tnt.bHLH18_col_a_m1', label_cell_groups = FALSE, alpha=1, cell_size = 0.5) +
+  scale_color_gradient(low = '#eb6565', high = '#eb6565') + theme(legend.position = 'none')
+
+
+```
+
+
+
+# Trajectory THS UMAP
+
+Process with Monocle3
+
+```{r}
+
+# generate dummy metadata to comply with Monocle formatting requirements
+cell_metadata = as.data.frame(cbind(colnames(traj.mat.fam), colnames(traj.mat.fam)))
+rownames(cell_metadata) = cell_metadata[,1]
+gene_annotation =  as.data.frame(cbind(rownames(traj.mat.fam), rownames(traj.mat.fam)))
+colnames(gene_annotation) = c('id', 'gene_short_name')
+rownames(gene_annotation) = gene_annotation$id
+
+# build cds
+cds <- new_cell_data_set(traj.mat.fam %>% as.matrix,
+                         cell_metadata = cell_metadata,
+                         gene_metadata = gene_annotation)
+
+# parse THS names to get metadata on genomic location/size
+colData(cds)$chr = unlist(strsplit(colData(cds)[,1], split='\\.'))[seq(1,length(unlist(strsplit(colData(cds)[,1], split='\\.'))), 3)]
+colData(cds)$start = as.numeric(unlist(strsplit(colData(cds)[,1], split='\\.'))[seq(2,length(unlist(strsplit(colData(cds)[,1], split='\\.'))), 3)])
+colData(cds)$stop = as.numeric(unlist(strsplit(colData(cds)[,1], split='\\.'))[seq(3,length(unlist(strsplit(colData(cds)[,1], split='\\.'))), 3)])
+colData(cds)$len = colData(cds)$stop - colData(cds)$start
+colData(cds)$ths = paste(colData(cds)$chr, ':',colData(cds)$start,'-', colData(cds)$stop, sep = '')
+
+# add metadata on dynamic THS along stomatal developmental trajectory 
+colData(cds)$traj_type = rep(NA, length(colData(cds)$ths))
+colData(cds)$traj_type = hit.df$traj_type[match(colData(cds)$ths, traj.df$ths)]
+
+# size factors are computed based on median-normalized length of THS
+colData(cds)$Size_Factor = colData(cds)$len / median(colData(cds)$len)
+
+# pre-process with PCA and use UMAP dimensionality reduction
+cds <- detect_genes(cds)
+cds <- preprocess_cds(cds, num_dim = 10)
+cds <- reduce_dimension(cds,
+                        preprocess_method = 'PCA',
+                        reduction_method = 'UMAP',
+                        umap.min_dist = 0.2,
+                        umap.n_neighbors = 25L)
+
+cds <- cluster_cells(cds, resolution = 1e-5,
+                     reduction_method = 'UMAP')
+
+
+```
+
+
+Plot UMAP of trajectory THS
+
+```{r}
+
+# colored by trajectory type
+plot_cells(cds[,!is.na(colData(cds)$traj_type)],
+           color_cells_by='traj_type', label_cell_groups = FALSE, alpha=1, cell_size = 1.5) + 
+  scale_color_manual(values = c('#65b1eb', '#eb6565')) 
+
+# color THS if motif from family is present (binary)
+plot_cells(cds[,!is.na(colData(cds)$traj_type)], genes='BBRBPC', label_cell_groups = FALSE, alpha=1, cell_size = 1.5) +
+  scale_color_gradient(low = '#eb6565', high = '#eb6565') + theme(legend.position = 'none')
+
+plot_cells(cds[,!is.na(colData(cds)$traj_type)], genes='bHLH', label_cell_groups = FALSE, alpha=1, cell_size = 1.5) +
+  scale_color_gradient(low = '#eb6565', high = '#eb6565') + theme(legend.position = 'none')
+
+
+```
+
+
